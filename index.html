@@ -172,6 +172,11 @@
   .superset-group { border: 1px solid var(--gold); border-radius: var(--radius); padding: 10px; margin-top: 10px; }
   .superset-group .ex-block + .ex-block { margin-top: 10px; }
   .superset-connector { text-align: center; font-size: 0.72rem; color: var(--ash-soft); margin: -2px 0 8px; }
+  /* Pedido de Lucas: poder reordenar los ejercicios elegidos (Fuerza y WOD) con ▲▼ en vez de quedar
+     fijos en el orden en que se agregaron — ver reorderButtonsHtml(). */
+  .reorder-controls { display: flex; flex-direction: column; gap: 3px; flex: none; padding-top: 2px; }
+  .reorder-controls .btn { padding: 2px 8px; line-height: 1.3; }
+  .reorder-controls .btn[disabled] { opacity: 0.3; }
   .ex-name { font-size: 1.02rem; font-weight: 700; }
   .set-grid { display: grid; grid-template-columns: 26px 1fr 1fr 30px; gap: 6px; align-items: center; margin-top: 10px; }
   .set-grid .head { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-faint); font-family: var(--font-mono); }
@@ -335,13 +340,30 @@
   /* Piloto de reconocimiento de movimiento (KB Deportivo · Jerk y Snatch). */
   .cam-panel { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(51,54,39,0.6); }
   .cam-panel-active { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .cam-preview-wrap { position: relative; flex: none; width: 96px; height: 128px; border-radius: var(--radius); overflow: hidden; background: #000; border: 1px solid var(--line); }
-  .cam-preview-wrap canvas { width: 100%; height: 100%; display: block; }
+  /* Pedido de Lucas: proporción más grande por default (antes 96×128) — mismo 3:4 del canvas. */
+  .cam-preview-wrap { position: relative; flex: none; width: 150px; height: 200px; border-radius: var(--radius); overflow: hidden; background: #000; border: 1px solid var(--line); }
+  /* object-fit: cover (no "fill", el default) — el canvas dibuja siempre en 270×360 (3:4) pero el
+     contenedor zoomed pasa a ocupar TODA la pantalla con la proporción real del teléfono: sin esto
+     el video se estiraba para calzar en ese rectángulo distinto y se veía deformado (Lucas: "aparece
+     con proporciones raras"). Con cover se recorta lo que sobra pero no se deforma, y de paso llena
+     más pantalla ("proporción mayor") en vez de quedar con barras. */
+  .cam-preview-wrap canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
   /* Pedido de Lucas: ver la cámara en grande — mismo criterio que agrandar el video de técnica. */
   .cam-preview-wrap.zoomed { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 70; border: none; border-radius: 0; }
   .cam-preview-wrap.zoomed .cam-count-badge { padding: 14px 0; }
   .cam-preview-wrap.zoomed .cam-count-badge span:first-child { font-size: 3.4rem; }
   .cam-preview-wrap.zoomed .cam-count-label { font-size: 0.7rem; }
+  /* Pedido de Lucas: en pantalla completa, además de las reps, tiene que verse el tiempo de
+     ronda/descanso (ver renderCamPanel/updatePlayTimerDisplay) — arriba del todo, con buen contraste
+     sobre el video en vivo, y el mismo color por fase que ya usa el pizarrón grande. */
+  .cam-timer-readout { position: absolute; top: 0; left: 0; right: 0; z-index: 3; text-align: center; padding: 16px 0 10px; background: linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0)); pointer-events: none; }
+  .cam-timer-label { display: block; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-soft); }
+  .cam-timer-text { font-family: var(--font-display); font-size: 3rem; color: var(--blue); line-height: 1; }
+  .cam-timer-readout.phase-work .cam-timer-text { color: var(--ember); }
+  .cam-timer-readout.phase-rest .cam-timer-text { color: var(--danger); }
+  .cam-timer-readout.phase-rest .cam-timer-label { color: var(--danger); font-size: 0.95rem; font-weight: 700; }
+  .cam-timer-readout.phase-work .cam-timer-label { color: var(--ember); font-size: 0.95rem; font-weight: 700; }
+  .cam-timer-readout.overtime .cam-timer-text { color: var(--danger); }
   .cam-zoom-btn { position: absolute; top: 6px; right: 6px; z-index: 2; opacity: 0.88; }
   .cam-count-badge { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; background: rgba(22,21,19,0.72); padding: 3px 0; }
   .cam-count-badge span:first-child { font-family: var(--font-display-alt); font-weight: 600; font-size: 1.5rem; color: var(--ember); line-height: 1; display: block; }
@@ -737,18 +759,58 @@
   var DEFAULT_WOD_FUNCIONAL = [];
 
   function mins(arr) { return arr.map(function (m) { return { min: m }; }); }
+  // Nota compartida por los 5 eventos del Pentatlón IKMF (Clean, Long Cycle Press, Jerk, Half
+  // Snatch y Strict Push Press) — fuente: ikmf-world.com/disciplines/ikmf-pentathlon. La versión a
+  // 1 kettlebell usa 6 min por evento; la versión a 2 kettlebells usa 3 min (mismos 5 eventos, con
+  // ambos kettlebells a la vez) — se deja como nota porque la app no modela "versión" como un campo
+  // propio, el usuario cambia manualmente kettlebell/minutos si entrena la versión a dos.
+  function pentathlonNote(eventLabel) {
+    return 'Evento del Pentatlón IKMF' + (eventLabel ? ' (' + eventLabel + ')' : '') + ' — 6 min, máx. reps, 1 kettlebell. La versión a 2 kettlebells usa 3 min con ambos a la vez: cambiá el kettlebell a "2" y los minutos a mano si entrenás esa versión.';
+  }
   var DEFAULT_KB_DEPORTIVO = [
     { id: 'kd1', name: 'Snatch', patterns: ['cadera', 'jalon'], defaultBells: 'una', progressions: [
       { id: 'kd1p1', name: 'Base (a confirmar)', type: 'tiempo', rounds: mins([1]), restRatio: 1, note: 'Protocolo a confirmar — técnico, con descanso' },
-      { id: 'kd1p2', name: 'Protocolo Vikingo (Kenneth Jay)', type: 'intervalo', workSec: 15, restRatio: 1, totalMin: 10, rounds: mins([1]), note: 'Bloques de 15s trabajo / 15s descanso (ratio 1:1), cambiando de mano cada minuto. Duración total configurable: 5/10/15/30/40 min según nivel.', minLevel: 'intermedio' }
+      { id: 'kd1p2', name: 'Protocolo Vikingo (Kenneth Jay)', type: 'intervalo', workSec: 15, restRatio: 1, totalMin: 10, rounds: mins([1]), note: 'Bloques de 15s trabajo / 15s descanso (ratio 1:1), cambiando de mano cada minuto. Duración total configurable: 5/10/15/30/40 min según nivel.', minLevel: 'intermedio' },
+      { id: 'kd1p3', name: 'Pentatlón IKMF (6 min máx. reps)', type: 'tiempo', rounds: mins([6]), restRatio: 0, bellsHint: 'una', note: pentathlonNote('Half Snatch') + ' Este evento se rema con Half Snatch: una vez agregado, tocá "Half Snatch" en el toggle de variante.' }
     ] },
     { id: 'kd4', name: 'Long Cycle', patterns: ['cadera', 'rodilla', 'empuje'], defaultBells: 'dos', minLevel: 'intermedio', progressions: [
       { id: 'kd4p1', name: 'Base', type: 'tiempo', rounds: mins([1, 2, 3, 2, 1, 1]), restRatio: 1, note: 'Pirámide de minutos, descanso 1:1' }
     ] },
     { id: 'kd2', name: 'Jerk', patterns: ['empuje', 'rodilla'], defaultBells: 'dos', progressions: [
       { id: 'kd2p1', name: 'Pesado (continuo, alternando cada minuto)', type: 'tiempo', rounds: mins([1, 1, 1, 1, 1]), restRatio: 0, note: 'Alternando 1 min por brazo, sin descanso entre cambios (continuo) — pensado para 1 kettlebell', bellsHint: 'una' },
-      { id: 'kd3p1', name: 'Liviano (pirámide de minutos, descanso 1:1)', type: 'tiempo', rounds: mins([1, 2, 2, 1, 2, 1, 1]), restRatio: 1, note: 'Pirámide de minutos, descanso 1:1 — pensado para 2 kettlebells', bellsHint: 'dos' }
+      { id: 'kd3p1', name: 'Liviano (pirámide de minutos, descanso 1:1)', type: 'tiempo', rounds: mins([1, 2, 2, 1, 2, 1, 1]), restRatio: 1, note: 'Pirámide de minutos, descanso 1:1 — pensado para 2 kettlebells', bellsHint: 'dos' },
+      { id: 'kd2p3', name: 'Pentatlón IKMF (6 min máx. reps)', type: 'tiempo', rounds: mins([6]), restRatio: 0, bellsHint: 'una', note: pentathlonNote('Jerk') }
+    ] },
+    // Push Press (Strict Press con dip de piernas): uno de los 5 movimientos del Pentatlón IKMF
+    // (junto a Clean, Long Cycle Press, Jerk y Half Snatch — este último ya está como variante de
+    // Snatch). Sin piloto de cámara todavía (CAM_EXERCISE_KEY solo cubre Jerk/Snatch/Long Cycle).
+    { id: 'kd5', name: 'Push Press', patterns: ['empuje', 'rodilla'], defaultBells: 'una', progressions: [
+      { id: 'kd5p1', name: 'Base (a confirmar)', type: 'tiempo', rounds: mins([1]), restRatio: 1, note: 'Protocolo a confirmar — técnico, con descanso' },
+      { id: 'kd5p2', name: 'Pentatlón IKMF (6 min máx. reps)', type: 'tiempo', rounds: mins([6]), restRatio: 0, bellsHint: 'una', note: pentathlonNote('Push Press') }
+    ] },
+    // Clean: cuarto movimiento del Pentatlón IKMF — subir el kettlebell a la posición de rack, sin
+    // presionar ni hacer jerk (eso ya lo cubren Push Press y Jerk). Es un movimiento propio de KB
+    // Deportivo (con su propio protocolo/temporizador), distinto del "Clean" de WOD Funcional
+    // (wc_clean), que es una variante suelta para armar cadenas/complejos sin timing propio.
+    { id: 'kd6', name: 'Clean', patterns: ['cadera', 'empuje'], defaultBells: 'una', progressions: [
+      { id: 'kd6p1', name: 'Base (a confirmar)', type: 'tiempo', rounds: mins([1]), restRatio: 1, note: 'Protocolo a confirmar — técnico, con descanso' },
+      { id: 'kd6p2', name: 'Pentatlón IKMF (6 min máx. reps)', type: 'tiempo', rounds: mins([6]), restRatio: 0, bellsHint: 'una', note: pentathlonNote('Clean') }
+    ] },
+    // Long Cycle Press: quinto movimiento del Pentatlón IKMF — clean a rack y PRESS estricto arriba
+    // en cada rep (sin jerk/dip-drive). Distinto del "Long Cycle" de arriba (kd4), que es Clean+Jerk
+    // clásico — por eso es un movimiento aparte y no una variante de ninguno de los dos.
+    { id: 'kd7', name: 'Long Cycle Press', patterns: ['cadera', 'rodilla', 'empuje'], defaultBells: 'una', progressions: [
+      { id: 'kd7p1', name: 'Base (a confirmar)', type: 'tiempo', rounds: mins([1]), restRatio: 1, note: 'Protocolo a confirmar — técnico, con descanso' },
+      { id: 'kd7p2', name: 'Pentatlón IKMF (6 min máx. reps)', type: 'tiempo', rounds: mins([6]), restRatio: 0, bellsHint: 'una', note: pentathlonNote('Long Cycle Press') }
     ] }
+  ];
+  // Los 5 eventos del Pentatlón IKMF, en el orden oficial de competencia — ver loadKbPentathlon().
+  var KB_PENTATHLON_EVENTS = [
+    { movementId: 'kd6', progressionId: 'kd6p2' },           // 1. Clean
+    { movementId: 'kd7', progressionId: 'kd7p2' },           // 2. Long Cycle Press
+    { movementId: 'kd2', progressionId: 'kd2p3' },           // 3. Jerk
+    { movementId: 'kd1', progressionId: 'kd1p3', variant: 'Half Snatch' }, // 4. Half Snatch
+    { movementId: 'kd5', progressionId: 'kd5p2' }            // 5. Strict Push Press
   ];
 
   // Catálogo de "bloques" de WOD (movimientos base para armar rounds), separado de KB Deportivo
@@ -1173,6 +1235,28 @@
       kd2.progressions = (kd2.progressions || []).concat(kd3.progressions || []);
       state.kbDeportivo = state.kbDeportivo.filter(function (m) { return m.id !== 'kd3'; });
     } else if (kd2 && kd2.defaultBells === undefined) kd2.defaultBells = 'dos';
+    // Push Press (kd5), Clean (kd6) y Long Cycle Press (kd7) son nuevos — los suma a los estados ya
+    // guardados que todavía no los tengan, sin tocar nada que el usuario haya agregado o editado por
+    // su cuenta (y sin duplicar si ya existen, por ejemplo si los había cargado antes a mano con el
+    // mismo nombre).
+    ['kd5', 'kd6', 'kd7'].forEach(function (mid) {
+      if (state.kbDeportivo.some(function (m) { return m.id === mid; })) return;
+      var defM = DEFAULT_KB_DEPORTIVO.find(function (m) { return m.id === mid; });
+      if (!state.kbDeportivo.some(function (m) { return m.name === defM.name; })) {
+        if (defM) state.kbDeportivo.push(JSON.parse(JSON.stringify(defM)));
+      }
+    });
+    // Las progresiones de Pentatlón IKMF (kd1p3/kd2p3/kd5p2) son nuevas también para movimientos que
+    // ya existían — se suman a los que ya estén guardados sin la progresión, sin duplicar ni tocar
+    // ninguna otra progresión que el usuario ya tenga.
+    [['kd1', 'kd1p3'], ['kd2', 'kd2p3'], ['kd5', 'kd5p2'], ['kd6', 'kd6p2'], ['kd7', 'kd7p2']].forEach(function (pair) {
+      var m = state.kbDeportivo.find(function (mm) { return mm.id === pair[0]; });
+      var defM = DEFAULT_KB_DEPORTIVO.find(function (mm) { return mm.id === pair[0]; });
+      if (!m || !defM || !Array.isArray(m.progressions)) return;
+      if (m.progressions.some(function (p) { return p.id === pair[1]; })) return;
+      var defP = defM.progressions.find(function (p) { return p.id === pair[1]; });
+      if (defP) m.progressions.push(JSON.parse(JSON.stringify(defP)));
+    });
   }
   // Los 4 movimientos originales de WOD Funcional (wf1-wf4) quedaron reemplazados por entradas
   // equivalentes del catálogo de WOD (Sentadilla/Frontal, Swing, y los nuevos Thruster/Renegade row
@@ -2118,6 +2202,20 @@
     // paso siguiente es elegir el formato del temporizador, ya en la tarjeta de "Elegidos".
     if (progressionId === '__new__') showToast(dm.name + ' agregado — elegí el formato del temporizador en "Elegidos".');
   }
+  // Carga de una vez los 5 eventos del Pentatlón IKMF (Clean, Long Cycle Press, Jerk, Half Snatch y
+  // Push Press) a "Elegidos", cada uno con su protocolo de evento (6 min, máx. reps, 1 kettlebell —
+  // ver KB_PENTATHLON_EVENTS). No toca lo que ya haya en Elegidos, solo suma los 5 eventos.
+  function loadKbPentathlon() {
+    KB_PENTATHLON_EVENTS.forEach(function (ev) {
+      addWodItem('deportivo', ev.movementId, ev.progressionId);
+      if (ev.variant) {
+        var added = ui.draftWod[ui.draftWod.length - 1];
+        if (added) added.variant = ev.variant;
+      }
+    });
+    renderAll();
+    showToast('Pentatlón IKMF cargado — 5 eventos, 1 kettlebell, 6 min c/u. Ajustá kettlebell/minutos en "Elegidos" si entrenás la versión a dos.');
+  }
   // Agrega un movimiento del catálogo de WOD (Clean/Press/Snatch/Sentadilla/Swing/Peso muerto/Dominadas).
   function addWodCatalogItem(catId) {
     var cm = state.wodCatalog.find(function (m) { return m.id === catId; });
@@ -2663,7 +2761,26 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Pedido de Lucas: "aparece con proporciones raras" — antes se dibujaba el frame COMPLETO de la
+    // cámara estirado al 3:4 del canvas (270×360) sin importar la proporción real del sensor (celular
+    // suele dar 4:3, 16:9 o similar según orientación), deformando la imagen. Acá se recorta el centro
+    // del video a ese mismo 3:4 ANTES de dibujar (mismo criterio que CSS object-fit:cover) — se pierde
+    // algo de los bordes, pero la imagen ya no se ve estirada.
+    var canvasRatio = canvas.width / canvas.height;
+    var videoRatio = video.videoWidth / video.videoHeight;
+    var sx, sy, sWidth, sHeight;
+    if (videoRatio > canvasRatio) {
+      sHeight = video.videoHeight;
+      sWidth = sHeight * canvasRatio;
+      sx = (video.videoWidth - sWidth) / 2;
+      sy = 0;
+    } else {
+      sWidth = video.videoWidth;
+      sHeight = sWidth / canvasRatio;
+      sx = 0;
+      sy = (video.videoHeight - sHeight) / 2;
+    }
+    ctx.drawImage(video, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
     ctx.restore();
   }
   var lastCamPhase = null;
@@ -2812,8 +2929,21 @@
     // Pedido de Lucas: el contador ahora distingue el movimiento y descarta lo que no calza — este
     // aviso es lo que le explica a Lucas por qué algo que hizo no sumó (en vez de fallar en silencio).
     var mismatchHtml = '<p class="cam-mismatch" id="cam-mismatch">' + (cam.mismatchCount > 0 ? esc('No reconocidas como ' + camDisplayName(item) + ': ' + cam.mismatchCount) : '') + '</p>';
+    // Pedido de Lucas: en pantalla completa la cámara tapa el pizarrón de atrás, así que ahí adentro
+    // también tiene que verse el tiempo restante de ronda/descanso (no solo las reps, que ya se veían
+    // con cam-count-badge) — ver updatePlayTimerDisplay() para cómo se mantiene sincronizado.
+    var camTimerHtml = '';
+    if (zoomed) {
+      var camSt = (ui.play && ui.play.active) ? playTimerState() : null;
+      var camPhaseCls = camSt && camSt.phase ? ' phase-' + camSt.phase : '';
+      var camOvertimeCls = camSt && camSt.overtime ? ' overtime' : '';
+      camTimerHtml = '<div class="cam-timer-readout' + camPhaseCls + camOvertimeCls + '" id="cam-timer-wrap">' +
+        '<span id="cam-timer-label" class="cam-timer-label">' + esc(camSt ? camSt.label : '') + '</span>' +
+        '<span id="cam-timer-text" class="cam-timer-text">' + esc(camSt ? camSt.text : '') + '</span></div>';
+    }
     return '<div class="cam-panel cam-panel-active">' +
       '<div class="cam-preview-wrap' + (zoomed ? ' zoomed' : '') + '">' +
+      camTimerHtml +
       '<canvas id="cam-canvas" width="270" height="360"></canvas>' +
       '<button type="button" class="btn ghost small pb-icon-btn cam-zoom-btn" data-action="cam-toggle-zoom" title="' + (zoomed ? 'Achicar cámara' : 'Agrandar cámara') + '">' + (zoomed ? '⤡' : '⤢') + '</button>' +
       '<div class="cam-count-badge"><span id="cam-rep-count">' + cam.count + '</span><span class="cam-count-label">reps</span>' + sidesHtml + '</div></div>' +
@@ -3087,6 +3217,19 @@
       // Reconocimiento de movimiento (piloto KB Deportivo): si la cámara está activa, cada tick chequea si la
       // ronda de trabajo en curso recién cerró para guardar el conteo — ver maybeCaptureCamRound().
       if (ui.cam && ui.cam.active) maybeCaptureCamRound(stagesForSync[idxForSync], st);
+      // Pedido de Lucas: en KB Deportivo, al terminar el último round (+ descanso) del ejercicio el
+      // pizarrón tiene que avanzar solo — antes se quedaba sumando "overtime" indefinidamente hasta
+      // que Lucas tocaba "Siguiente" a mano. st.numRounds solo viene seteado para un ítem de KB
+      // Deportivo con su propio timing (ver wodRoundsInfo/playTimerState) y st.overtime en esa rama
+      // significa "ya se consumieron TODOS los rounds + descansos". nextStage() ya resuelve los dos
+      // casos: pasa a la próxima etapa, o si esta era la última, frena el pizarrón y avisa que se
+      // puede finalizar — acá solo dispara ese mismo paso solo, en vez de esperar el toque manual.
+      // maybeCaptureCamRound ya corrió arriba, así que el conteo del último round queda guardado
+      // antes de avanzar.
+      if (st.overtime && st.numRounds != null) {
+        nextStage();
+        return;
+      }
       if (setsChanged || restNumChanged || vueltaChanged) {
         maybeSoundTick(st);
         renderAll();
@@ -3111,6 +3254,13 @@
       var pbLbl = document.getElementById('pb-timer-label');
       var pbWrap = document.querySelector('.play-board-overlay');
       if (pbEl && pbLbl) { pbLbl.textContent = st.label; pbEl.textContent = st.text; if (pbWrap) { pbWrap.classList.toggle('overtime', !!st.overtime); applyPhaseClass(pbWrap); } }
+      // Pedido de Lucas: con la cámara en pantalla completa (ui.cam.zoomed) tapa todo el pizarrón de
+      // atrás — así que el tiempo de ronda/descanso se repite acá adentro (ver renderCamPanel), y se
+      // mantiene sincronizado tick a tick igual que play-timer-wrap/pb-timer arriba.
+      var camEl = document.getElementById('cam-timer-text');
+      var camLbl = document.getElementById('cam-timer-label');
+      var camWrap = document.getElementById('cam-timer-wrap');
+      if (camEl && camLbl) { camLbl.textContent = st.label; camEl.textContent = st.text; if (camWrap) { camWrap.classList.toggle('overtime', !!st.overtime); applyPhaseClass(camWrap); } }
       // El fondo de video (técnica <-> descanso) tiene que seguir al reloj igual que el texto: como
       // el ciclo ejercicio/descanso ahora es 100% automático (por reloj, sin click del usuario), si
       // solo parchamos el texto acá el fondo se queda pegado en lo que se vio la última vez que hubo
@@ -3163,6 +3313,14 @@
     // renderWodChainBody) — así que acá solo se arma el cronómetro sugerido general del formato
     // (AMRAP/cap), igual que antes para un ítem de WOD Funcional suelto.
     if (stage && stage.kind === 'wodchain') { ui.play.wodStartTs = nowForPlay(); ui.play.wodTargetSec = wodStageTargetSec(stage.ref.format); }
+    // Pedido de Lucas: antes había que esperar a estar YA en la etapa para recién ahí tocar "Activar
+    // cámara" a mano — perdía tiempo (y la primera vez, el permiso del navegador) justo arrancando el
+    // ejercicio. Ahora, al entrar a una etapa de KB Deportivo con piloto de cámara (Snatch/Half
+    // Snatch/Jerk/Long Cycle — ver CAM_EXERCISE_KEY), se activa sola, con el mismo kettlebell (1/2)
+    // que ya tiene cargado el ejercicio — sigue pudiendo apagarse a mano con el botón de siempre.
+    if (stage && stage.kind === 'wod' && stage.ref && stage.ref.source === 'deportivo' && camExpectedKey(stage.ref)) {
+      startPoseCam(stage.ref.bells === 'dos' ? 'dos' : 'una', camExpectedKey(stage.ref), camDisplayName(stage.ref));
+    }
     clearStageIntroTimer();
     if (stage && stage.kind !== 'activation') {
       ui.play.stageIntroName = stageName(stage);
@@ -4058,28 +4216,64 @@
       '<button class="btn small" data-action="add-set" data-i="' + i + '" style="margin-top:8px">+ Serie</button></div>';
   }
 
-  function renderAddedStrength() {
-    var rendered = {};
-    var out = [];
-    ui.draftStrength.forEach(function (ex, i) {
-      if (rendered[i]) return;
+  // Pedido de Lucas: poder reordenar los ejercicios elegidos (Fuerza y WOD) — antes quedaban fijos
+  // en el orden en que se iban agregando. Acá se arma primero la lista de "unidades" en orden de
+  // entrenamiento (una súper serie cuenta como UNA unidad, se mueve entera) — ver moveStrengthUnit().
+  function strengthUnits() {
+    var units = []; var seen = [];
+    ui.draftStrength.forEach(function (ex) {
+      if (seen.indexOf(ex) !== -1) return;
       if (ex.supersetId) {
-        var members = [];
-        ui.draftStrength.forEach(function (ex2, i2) {
-          if (ex2.supersetId === ex.supersetId) { members.push({ ex: ex2, i: i2 }); rendered[i2] = true; }
-        });
-        members.sort(function (a, b) { return (a.ex.supersetOrder || 0) - (b.ex.supersetOrder || 0); });
-        var inner = members.map(function (m, mi) {
-          return renderStrengthBlock(m.ex, m.i) + (mi < members.length - 1 ? '<div class="superset-connector">↓ seguido de, sin descanso</div>' : '');
-        }).join('');
-        out.push('<div class="superset-group"><div class="row between" style="margin-bottom:8px">' +
-          '<span class="cat-tag" data-cat="No convencionales">⚡ Súper serie (' + members.length + ' ejercicios)</span>' +
-          '<button class="btn ghost small" data-action="ungroup-superset" data-id="' + ex.supersetId + '">Deshacer súper serie</button></div>' +
-          inner + '</div>');
+        var group = ui.draftStrength.filter(function (e) { return e.supersetId === ex.supersetId; });
+        group.sort(function (a, b) { return (a.supersetOrder || 0) - (b.supersetOrder || 0); });
+        group.forEach(function (e) { seen.push(e); });
+        units.push(group);
       } else {
-        rendered[i] = true;
-        out.push(renderStrengthBlock(ex, i));
+        seen.push(ex);
+        units.push([ex]);
       }
+    });
+    return units;
+  }
+  // Intercambia de lugar la unidad "unitIdx" con la de arriba/abajo (dir -1/+1) y reconstruye
+  // ui.draftStrength en el nuevo orden — por referencia de objeto, así que no importa si una súper
+  // serie tenía sus miembros salteados en el array original.
+  function moveStrengthUnit(unitIdx, dir) {
+    var units = strengthUnits();
+    var target = unitIdx + dir;
+    if (target < 0 || target >= units.length) return;
+    var tmp = units[unitIdx]; units[unitIdx] = units[target]; units[target] = tmp;
+    ui.draftStrength = [].concat.apply([], units);
+    renderAll(); persist();
+  }
+  // Botones ▲▼ compartidos por unidad (ejercicio suelto o súper serie entera) — deshabilitados en
+  // los extremos. action: nombre del data-action a disparar (distinto para Fuerza y WOD).
+  function reorderButtonsHtml(action, unitIdx, isFirst, isLast) {
+    return '<div class="reorder-controls">' +
+      '<button type="button" class="btn ghost small" data-action="' + action + '" data-unit="' + unitIdx + '" data-dir="-1"' + (isFirst ? ' disabled' : '') + ' aria-label="Subir">▲</button>' +
+      '<button type="button" class="btn ghost small" data-action="' + action + '" data-unit="' + unitIdx + '" data-dir="1"' + (isLast ? ' disabled' : '') + ' aria-label="Bajar">▼</button>' +
+      '</div>';
+  }
+  function renderAddedStrength() {
+    var units = strengthUnits();
+    var out = units.map(function (unit, u) {
+      var controls = reorderButtonsHtml('move-strength-unit', u, u === 0, u === units.length - 1);
+      var unitHtml;
+      if (unit.length > 1) {
+        var supersetId = unit[0].supersetId;
+        var inner = unit.map(function (ex, mi) {
+          var i = ui.draftStrength.indexOf(ex);
+          return renderStrengthBlock(ex, i) + (mi < unit.length - 1 ? '<div class="superset-connector">↓ seguido de, sin descanso</div>' : '');
+        }).join('');
+        unitHtml = '<div class="superset-group"><div class="row between" style="margin-bottom:8px">' +
+          '<span class="cat-tag" data-cat="No convencionales">⚡ Súper serie (' + unit.length + ' ejercicios)</span>' +
+          '<button class="btn ghost small" data-action="ungroup-superset" data-id="' + supersetId + '">Deshacer súper serie</button></div>' +
+          inner + '</div>';
+      } else {
+        var i2 = ui.draftStrength.indexOf(unit[0]);
+        unitHtml = renderStrengthBlock(unit[0], i2);
+      }
+      return '<div class="row" style="align-items:flex-start;gap:6px">' + controls + '<div style="flex:1;min-width:0">' + unitHtml + '</div></div>';
     });
     return out.join('');
   }
@@ -4218,7 +4412,11 @@
       return '<button class="exercise-row" style="width:100%;border:1px solid var(--line);cursor:pointer" data-action="add-wod-dynamic" data-kind="calistenia" data-name="' + esc(it.name) + '" data-patterns="' + esc(it.pattern || '') + '"><span class="name">' + esc(it.name) + '</span><span class="cat-tag">+</span></button>';
     }).join('');
 
-    var addedWod = ui.draftWod.map(function (item, i) { return renderAddedWodItem(item, i); }).join('');
+    // Pedido de Lucas: los ejercicios elegidos para el WOD se hacen uno a continuación del otro (es
+    // la definición de un WOD/circuito) — por eso van agrupados en UN solo recuadro, igual que ya
+    // pasaba con la "súper serie" de Fuerza (mismo estilo .superset-group + conector entre ítems),
+    // en vez de aparecer como tarjetas sueltas apiladas. Ver renderWodChainGroup().
+    var addedWod = renderWodChainGroup();
     // Pedido de Lucas: la pantalla nueva de revisión "quedó rara" — se saca, y "Elegidos" vuelve a
     // vivir DENTRO de la pantalla de Entrenar, en su propia tarjeta, debajo de la sección de WOD
     // (fin de manualHtml/autoCardHtml) — ya no como panel flotante fijo ni en una pantalla aparte.
@@ -4234,7 +4432,7 @@
       supersetHelperHtml +
       (addedStrength ? '<div class="stack" style="margin-top:10px;gap:6px">' + addedStrength + '</div>' : '') +
       (addedStrength && addedWod ? '<div style="height:8px"></div>' : '') +
-      (addedWod ? '<div class="stack" style="gap:6px">' + addedWod + '</div>' : '');
+      addedWod;
     var elegidosCardHtml = chosenCount ?
       ('<div class="card chosen-inline-card" style="border-color:var(--gold)">' +
        '<button type="button" class="row between chosen-inline-header" style="width:100%;background:transparent;border:none;padding:0;cursor:pointer" data-action="chosen-panel-toggle">' +
@@ -4316,7 +4514,10 @@
         '<div class="row between" style="margin:4px 0 8px"><span class="wod-badge ' + ui.wodPathChoice + '">' + (ui.wodPathChoice === 'funcional' ? 'WOD Funcional' : 'KB Deportivo') + '</span>' +
         '<button class="btn ghost small" data-action="set-wod-path" data-path="">Cambiar</button></div>' +
         (ui.wodPathChoice === 'funcional' ? renderWodFuncionalBody(templateActive, funcionalHtml, catalogHtml, coreHtml, calisteniaHtml, pullupsHtml) :
-          '<div style="margin-top:8px">' + (deportivoHtml || '<p style="font-size:0.8rem;color:var(--ash-faint)">Nada que sugerir.</p>') + '</div>'
+          '<div style="margin-top:8px">' +
+          '<button type="button" class="btn blue block" data-action="load-kb-pentathlon" style="margin-bottom:10px">🏆 Cargar Pentatlón IKMF (5 eventos)</button>' +
+          '<p class="protocol-note" style="margin:-4px 0 10px">Clean, Long Cycle Press, Jerk, Half Snatch y Push Press — 6 min c/u, máx. reps, 1 kettlebell.</p>' +
+          (deportivoHtml || '<p style="font-size:0.8rem;color:var(--ash-faint)">Nada que sugerir.</p>') + '</div>'
         )
       ) +
       '</div>';
@@ -4560,6 +4761,31 @@
   // el botón "Listo — colapsar" que probamos antes).
   function wodItemCollapsed(item, i) {
     return false;
+  }
+  // Agrupa TODOS los ejercicios elegidos del WOD en un solo recuadro (mismo estilo .superset-group
+  // que ya usa la "súper serie" de Fuerza), con un conector entre cada uno — a diferencia de Fuerza,
+  // acá no hace falta agrupar a mano: un WOD es por definición una secuencia, se hacen uno a
+  // continuación del otro, así que el recuadro agrupa siempre que haya 2 o más ejercicios elegidos.
+  // Pedido de Lucas: cambia de lugar el ejercicio "i" con el de arriba/abajo (dir -1/+1) dentro del
+  // WOD — el orden del array es el orden en que se entrenan, así que mover acá alcanza (sin
+  // complicación de súper series, eso solo existe del lado de Fuerza).
+  function moveWodItem(i, dir) {
+    var target = i + dir;
+    if (target < 0 || target >= ui.draftWod.length) return;
+    var tmp = ui.draftWod[i]; ui.draftWod[i] = ui.draftWod[target]; ui.draftWod[target] = tmp;
+    renderAll(); persist();
+  }
+  function renderWodChainGroup() {
+    if (!ui.draftWod.length) return '';
+    var inner = ui.draftWod.map(function (item, i) {
+      var controls = reorderButtonsHtml('move-wod-item', i, i === 0, i === ui.draftWod.length - 1);
+      var row = '<div class="row" style="align-items:flex-start;gap:6px">' + controls + '<div style="flex:1;min-width:0">' + renderAddedWodItem(item, i) + '</div></div>';
+      return row + (i < ui.draftWod.length - 1 ? '<div class="superset-connector">↓ a continuación</div>' : '');
+    }).join('');
+    if (ui.draftWod.length === 1) return '<div class="stack" style="gap:6px">' + inner + '</div>';
+    return '<div class="superset-group" style="border-color:var(--blue)"><div class="row" style="margin-bottom:8px">' +
+      '<span class="cat-tag" data-cat="WOD">🔗 WOD (' + ui.draftWod.length + ' ejercicios, uno a continuación del otro)</span></div>' +
+      inner + '</div>';
   }
   function renderAddedWodItem(item, i) {
     var badge = item.source === 'funcional' ? '<span class="wod-badge funcional">WOD Funcional</span>' :
@@ -5030,10 +5256,23 @@
       return '<div class="ss-breakdown-row"><div><div class="ss-breakdown-name">' + esc(e.name) + '</div>' +
         '<div class="ss-breakdown-vol">' + e.sets.length + ' series · <b class="num">' + Math.round(strengthExerciseVolume(e)) + ' kg</b> vol.</div></div>' + effortChip(e.effortLevel) + '</div>';
     }).join('');
+    // Pedido de Lucas: en el resumen final, los ejercicios de KB Deportivo hechos con 1 kettlebell
+    // (bells !== 'dos') muestran además el desglose Izq/Der sumado de todas las rondas grabadas por
+    // cámara (item.camReps, ver maybeCaptureCamRound) — con 2 kettlebells no aplica, ahí solo hay total.
     var wodRows = (s.wod || []).map(function (w) {
       var proto = w.source === 'funcional' ? funcionalItemProtoText(w, s.wodFormat) : (w.source === 'catalogo' ? catalogItemDetailText(w) : protocolSummary(w));
+      var camHtml = '';
+      if (w.source === 'deportivo' && w.bells !== 'dos' && w.camReps && w.camReps.length) {
+        var camTotals = w.camReps.reduce(function (a, n) {
+          if (n && typeof n === 'object') { a.left += (n.left || 0); a.right += (n.right || 0); }
+          return a;
+        }, { left: 0, right: 0 });
+        if (camTotals.left || camTotals.right) {
+          camHtml = '<div class="ss-breakdown-vol" style="margin-top:2px">📷 Izq <b class="num">' + camTotals.left + '</b> · Der <b class="num">' + camTotals.right + '</b> reps</div>';
+        }
+      }
       return '<div class="ss-breakdown-row"><div><div class="ss-breakdown-name">' + esc(w.name) + '</div>' +
-        '<div class="ss-breakdown-vol">' + esc(proto) + ' · <b class="num">' + Math.round(wodItemVolume(w)) + ' kg</b> vol.</div></div>' + effortChip(w.effortLevel) + '</div>';
+        '<div class="ss-breakdown-vol">' + esc(proto) + ' · <b class="num">' + Math.round(wodItemVolume(w)) + ' kg</b> vol.</div>' + camHtml + '</div>' + effortChip(w.effortLevel) + '</div>';
     }).join('');
     var strengthGroup = s.strength.length ? '<div class="ss-grp"><p class="eyebrow" style="display:flex;align-items:baseline;justify-content:space-between"><span>Fuerza-hipertrofia</span><span class="num" style="color:var(--ash-soft);font-weight:600;letter-spacing:0;text-transform:none">' + Math.round(ss.strengthVol) + ' kg vol.</span></p><div class="card section-fuerza">' + strengthRows + '</div></div>' : '';
     var wodGroup = (s.wod || []).length ? '<div class="ss-grp"><p class="eyebrow" style="display:flex;align-items:baseline;justify-content:space-between"><span>WOD</span><span class="num" style="color:var(--ash-soft);font-weight:600;letter-spacing:0;text-transform:none">' + Math.round(ss.wodVol) + ' kg vol.</span></p><div class="card section-wod">' + wodRows + '</div></div>' : '';
@@ -5098,6 +5337,7 @@
       case 'move-day-plan': moveDayPlan(el.getAttribute('data-from'), el.getAttribute('data-to')); break;
       case 'export-routine': exportRoutineFile(); break;
       case 'auto-generate': autoGenerate(); break;
+      case 'load-kb-pentathlon': loadKbPentathlon(); break;
       case 'add-strength': addStrengthExercise(pattern, category, name); break;
       case 'remove-strength': removeStrengthExercise(+i); break;
       case 'chosen-panel-toggle': ui.chosenPanelCollapsed = !ui.chosenPanelCollapsed; renderAll(); break;
@@ -5175,6 +5415,8 @@
         break;
       case 'add-wod': addWodItem(source, id, el.getAttribute('data-progression')); break;
       case 'remove-wod': removeWodItem(+i); break;
+      case 'move-wod-item': moveWodItem(+el.getAttribute('data-unit'), +el.getAttribute('data-dir')); break;
+      case 'move-strength-unit': moveStrengthUnit(+el.getAttribute('data-unit'), +el.getAttribute('data-dir')); break;
       case 'load-wod-template':
         var tplSelId = el.getAttribute('data-select') || 'wod-template-select';
         var tplSel = document.getElementById(tplSelId);
