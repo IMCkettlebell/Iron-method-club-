@@ -350,27 +350,35 @@
   .cam-preview-wrap canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
   /* Pedido de Lucas: ver la cámara en grande — mismo criterio que agrandar el video de técnica. */
   .cam-preview-wrap.zoomed { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 70; border: none; border-radius: 0; }
-  .cam-preview-wrap.zoomed .cam-count-badge { padding: 14px 0; }
-  .cam-preview-wrap.zoomed .cam-count-badge span:first-child { font-size: 3.4rem; }
-  .cam-preview-wrap.zoomed .cam-count-label { font-size: 0.7rem; }
-  /* Pedido de Lucas: en pantalla completa, además de las reps, tiene que verse el tiempo de
-     ronda/descanso (ver renderCamPanel/updatePlayTimerDisplay) — arriba del todo, con buen contraste
-     sobre el video en vivo, y el mismo color por fase que ya usa el pizarrón grande. */
-  .cam-timer-readout { position: absolute; top: 0; left: 0; right: 0; z-index: 3; text-align: center; padding: 16px 0 10px; background: linear-gradient(rgba(0,0,0,0.55), rgba(0,0,0,0)); pointer-events: none; }
-  .cam-timer-label { display: block; font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-soft); }
-  .cam-timer-text { font-family: var(--font-display); font-size: 3rem; color: var(--blue); line-height: 1; }
+  /* Pedido de Lucas: "quiero que ocupe más espacio en la pantalla así me puedo ver a distancia.
+     Conservar solo la información relevante" — antes, en pantalla completa, había DOS franjas que
+     tapaban video: el reloj arriba (grande, ~90px) y el contador de reps abajo en banda sólida
+     (~110px). Se fusionan en UNA sola franja fina arriba (reloj + reps + Izq/Der juntos) y se saca
+     por completo la banda de abajo — así el video libre y visible crece bastante, que es lo que
+     Lucas necesita para verse completo parado más lejos del teléfono. En el recuadro chico (sin
+     zoom) el contador sigue abajo como antes, sin cambios. */
+  .cam-timer-readout { position: absolute; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.05) 70%, rgba(0,0,0,0)); pointer-events: none; }
+  .cam-timer-clock { text-align: left; }
+  .cam-timer-label { display: block; font-family: var(--font-mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-soft); }
+  .cam-timer-text { font-family: var(--font-display); font-size: 2.1rem; color: var(--blue); line-height: 1; }
   .cam-timer-readout.phase-work .cam-timer-text { color: var(--ember); }
   .cam-timer-readout.phase-rest .cam-timer-text { color: var(--danger); }
-  .cam-timer-readout.phase-rest .cam-timer-label { color: var(--danger); font-size: 0.95rem; font-weight: 700; }
-  .cam-timer-readout.phase-work .cam-timer-label { color: var(--ember); font-size: 0.95rem; font-weight: 700; }
+  .cam-timer-readout.phase-rest .cam-timer-label { color: var(--danger); font-size: 0.78rem; font-weight: 700; }
+  .cam-timer-readout.phase-work .cam-timer-label { color: var(--ember); font-size: 0.78rem; font-weight: 700; }
   .cam-timer-readout.overtime .cam-timer-text { color: var(--danger); }
-  .cam-zoom-btn { position: absolute; top: 6px; right: 6px; z-index: 2; opacity: 0.88; }
+  .cam-reps-inline { text-align: right; }
+  .cam-reps-inline #cam-rep-count { font-family: var(--font-display-alt); font-weight: 600; font-size: 2.1rem; color: var(--ember); line-height: 1; }
+  .cam-reps-inline .cam-count-label { font-family: var(--font-mono); font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-faint); margin-left: 3px; }
+  /* El botón de achicar se aleja de la franja de info (antes se superponía con el conteo de reps
+     cuando esa franja ocupaba todo el ancho arriba) y pasa a flotar solo, abajo a la derecha. */
+  .cam-zoom-btn { position: absolute; top: 6px; right: 6px; z-index: 4; opacity: 0.88; }
+  .cam-preview-wrap.zoomed .cam-zoom-btn { top: auto; bottom: 10px; right: 10px; }
   .cam-count-badge { position: absolute; bottom: 0; left: 0; right: 0; text-align: center; background: rgba(22,21,19,0.72); padding: 3px 0; }
   .cam-count-badge span:first-child { font-family: var(--font-display-alt); font-weight: 600; font-size: 1.5rem; color: var(--ember); line-height: 1; display: block; }
   .cam-count-label { font-family: var(--font-mono); font-size: 0.52rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ash-faint); }
   /* Pedido de Lucas: con 1 kettlebell, desglose Izquierda/Derecha visible junto al conteo. */
   .cam-sides { font-family: var(--font-mono); font-size: 0.6rem; color: var(--ash-soft); margin-top: 2px; }
-  .cam-preview-wrap.zoomed .cam-sides { font-size: 0.9rem; margin-top: 4px; }
+  .cam-reps-inline .cam-sides { text-align: right; }
   .cam-error { font-size: 0.74rem; color: var(--danger); margin-top: 6px; font-family: var(--font-mono); }
   /* Pedido de Lucas: avisar cuando un movimiento no calzó con el ejercicio esperado (no cuenta). */
   .cam-mismatch { font-size: 0.68rem; color: var(--ash-faint); margin: 6px 0 0; font-family: var(--font-mono); width: 100%; }
@@ -2929,24 +2937,32 @@
     // Pedido de Lucas: el contador ahora distingue el movimiento y descarta lo que no calza — este
     // aviso es lo que le explica a Lucas por qué algo que hizo no sumó (en vez de fallar en silencio).
     var mismatchHtml = '<p class="cam-mismatch" id="cam-mismatch">' + (cam.mismatchCount > 0 ? esc('No reconocidas como ' + camDisplayName(item) + ': ' + cam.mismatchCount) : '') + '</p>';
-    // Pedido de Lucas: en pantalla completa la cámara tapa el pizarrón de atrás, así que ahí adentro
-    // también tiene que verse el tiempo restante de ronda/descanso (no solo las reps, que ya se veían
-    // con cam-count-badge) — ver updatePlayTimerDisplay() para cómo se mantiene sincronizado.
+    // Pedido de Lucas: "quiero que ocupe más espacio en la pantalla así me puedo ver a distancia.
+    // Conservar solo la información relevante" — en pantalla completa el reloj de ronda/descanso y el
+    // conteo de reps (antes dos franjas separadas, una arriba y una abajo tapando video) se fusionan
+    // en UNA sola franja fina arriba, así queda mucho más video libre para verse de cuerpo entero
+    // parado lejos. Fuera de zoom el contador sigue abajo, chico, como antes.
     var camTimerHtml = '';
+    var camBadgeHtml = '';
     if (zoomed) {
       var camSt = (ui.play && ui.play.active) ? playTimerState() : null;
       var camPhaseCls = camSt && camSt.phase ? ' phase-' + camSt.phase : '';
       var camOvertimeCls = camSt && camSt.overtime ? ' overtime' : '';
       camTimerHtml = '<div class="cam-timer-readout' + camPhaseCls + camOvertimeCls + '" id="cam-timer-wrap">' +
+        '<div class="cam-timer-clock">' +
         '<span id="cam-timer-label" class="cam-timer-label">' + esc(camSt ? camSt.label : '') + '</span>' +
-        '<span id="cam-timer-text" class="cam-timer-text">' + esc(camSt ? camSt.text : '') + '</span></div>';
+        '<span id="cam-timer-text" class="cam-timer-text">' + esc(camSt ? camSt.text : '') + '</span>' +
+        '</div>' +
+        '<div class="cam-reps-inline"><span id="cam-rep-count">' + cam.count + '</span><span class="cam-count-label">reps</span>' + sidesHtml + '</div></div>';
+    } else {
+      camBadgeHtml = '<div class="cam-count-badge"><span id="cam-rep-count">' + cam.count + '</span><span class="cam-count-label">reps</span>' + sidesHtml + '</div>';
     }
     return '<div class="cam-panel cam-panel-active">' +
       '<div class="cam-preview-wrap' + (zoomed ? ' zoomed' : '') + '">' +
       camTimerHtml +
       '<canvas id="cam-canvas" width="270" height="360"></canvas>' +
       '<button type="button" class="btn ghost small pb-icon-btn cam-zoom-btn" data-action="cam-toggle-zoom" title="' + (zoomed ? 'Achicar cámara' : 'Agrandar cámara') + '">' + (zoomed ? '⤡' : '⤢') + '</button>' +
-      '<div class="cam-count-badge"><span id="cam-rep-count">' + cam.count + '</span><span class="cam-count-label">reps</span>' + sidesHtml + '</div></div>' +
+      camBadgeHtml + '</div>' +
       '<button type="button" class="btn ghost small" data-action="cam-toggle">Desactivar cámara</button>' +
       mismatchHtml + loggedHtml + '</div>';
   }
