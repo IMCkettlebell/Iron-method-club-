@@ -270,6 +270,17 @@
   .media-viewer-overlay .mv-top { position: absolute; top: 14px; left: 14px; right: 14px; display: flex; justify-content: space-between; align-items: center; }
   .media-viewer-overlay .mv-name { font-family: var(--font-display); font-size: 1.1rem; color: var(--ash); }
   .media-viewer-overlay img, .media-viewer-overlay video { max-width: 100%; max-height: 70vh; border-radius: var(--radius); border: 1px solid var(--line); }
+  /* "Mis grabaciones" (ver renderRecordingsViewer) — mismo overlay que el visor de media, pero con
+     lista scrolleable en vez de un solo medio centrado. */
+  .recordings-viewer { justify-content: flex-start; overflow-y: auto; padding-top: 70px; }
+  .recordings-viewer .rec-player-video { max-width: 100%; max-height: 42vh; border-radius: var(--radius); border: 1px solid var(--line); margin-bottom: 14px; }
+  .recordings-viewer .rec-empty { color: var(--ash-faint); text-align: center; margin-top: 30px; }
+  .recordings-viewer .rec-list { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 8px; }
+  .recordings-viewer .rec-item { background: var(--steel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .recordings-viewer .rec-item-info { display: flex; flex-direction: column; gap: 2px; }
+  .recordings-viewer .rec-item-info strong { color: var(--ash); font-family: var(--font-display-alt); font-size: 0.95rem; }
+  .recordings-viewer .rec-item-info span { color: var(--ash-faint); font-size: 0.78rem; font-family: var(--font-mono); }
+  .recordings-viewer .rec-item-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   #play-board:empty { display: none; }
   .play-board-overlay { position: fixed; inset: 0; z-index: 50; background: var(--iron); display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom, 0px); overflow-y: auto; }
   .pb-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex: none; padding: 14px 18px 0; }
@@ -1461,7 +1472,10 @@
   // de forma síncrona desde las funciones de render.
   var MEDIA_MAX_BYTES = 6 * 1024 * 1024; // 6MB crudo — sigue aplicando solo a fotos/GIF (base64 en state)
   var VIDEO_DB_NAME = 'iron-method-videos-v1';
-  var VIDEO_DB_VERSION = 1;
+  // v2: se agrega el store 'recordings' (grabaciones del piloto de cámara KB Deportivo, ver
+  // saveCamRecordingBlob) — subir la versión es lo único que hace falta para que onupgradeneeded
+  // cree el store nuevo también en los celulares que ya tenían la app instalada con v1.
+  var VIDEO_DB_VERSION = 2;
   var videoDbPromise = null;
   // Videos de técnica que Lucas nos manda por chat para incluir directamente en el archivo — se
   // siembran en IndexedDB la primera vez que se abre la app (ver primeVideoCaches), así no hace
@@ -1502,6 +1516,15 @@
   };
   var videoUrlCache = {};      // nombre de ejercicio -> object URL (video de técnica)
   var restVideoCache = [];     // [{ id, url }] videos generales de descanso/respiración
+  // Grabaciones del piloto de cámara (botón ⏺ en KB Deportivo) — [{ id, meta: { blob, mime,
+  // exerciseName, createdAt, size, downloadName } }], más nuevas primero. Ver stopCamRecording y
+  // "Mis grabaciones" (renderRecordingsViewer): Lucas reportó que no encontraba sus grabaciones
+  // después de usar el botón ⏺, y el mecanismo viejo (descarga directa por <a download> de un blob:)
+  // es poco confiable en varios navegadores de celular — sobre todo Safari/iOS, que no siempre guarda
+  // ese tipo de descarga en Fotos/Archivos, y a veces no hace nada visible. Por eso, desde ahora cada
+  // grabación se guarda SIEMPRE una copia acá adentro (IndexedDB), para poder verla/compartirla desde
+  // dentro de la app sin depender de esa descarga — ver stopCamRecording y saveCamRecordingToDevice.
+  var camRecordings = [];
   function openVideoDb() {
     if (videoDbPromise) return videoDbPromise;
     videoDbPromise = new Promise(function (resolve) {
@@ -1512,6 +1535,7 @@
         var db = req.result;
         if (!db.objectStoreNames.contains('exercise')) db.createObjectStore('exercise');
         if (!db.objectStoreNames.contains('rest')) db.createObjectStore('rest', { autoIncrement: true });
+        if (!db.objectStoreNames.contains('recordings')) db.createObjectStore('recordings', { autoIncrement: true });
       };
       req.onsuccess = function () { resolve(req.result); };
       req.onerror = function () { resolve(null); };
@@ -1603,6 +1627,70 @@
   function getMedia(name) { return videoUrlCache[name] || state.exerciseMedia[name] || null; }
   // Video de "cierre" (ver SEED_EXERCISE_VIDEO_OUTROS) para este ejercicio, si Lucas mandó uno.
   function getOutroMedia(name) { return videoUrlCache[name + OUTRO_KEY_SUFFIX] || null; }
+  // Carga el listado de grabaciones guardadas (ver camRecordings arriba) para que "Mis grabaciones"
+  // muestre lo que ya hay apenas abre la app, sin esperar a que Lucas entre al piloto de cámara.
+  function loadCamRecordings() {
+    idbGetAll('recordings').then(function (rows) {
+      camRecordings = rows.map(function (r) { return { id: r.key, meta: r.value || {} }; })
+        .sort(function (a, b) { return (b.meta.createdAt || 0) - (a.meta.createdAt || 0); });
+      renderAll();
+    }).catch(function () {});
+  }
+  // Guarda una grabación recién terminada (Blob) adentro de IndexedDB y la suma al listado en
+  // memoria — ver stopCamRecording, que es quien llama a esto apenas el MediaRecorder entrega el
+  // video completo.
+  function saveCamRecordingBlob(blob, mime, exerciseName, downloadName) {
+    var meta = { blob: blob, mime: mime || blob.type || 'video/webm', exerciseName: exerciseName || '', createdAt: Date.now(), size: blob.size, downloadName: downloadName };
+    return idbPut('recordings', null, meta).then(function (id) {
+      if (id != null) { camRecordings.unshift({ id: id, meta: meta }); renderAll(); }
+      return id;
+    });
+  }
+  function findCamRecording(id) { return camRecordings.filter(function (r) { return r.id === id; })[0]; }
+  function playCamRecording(id) {
+    var r = findCamRecording(id);
+    if (!r) return;
+    if (ui.recordingsPlayerUrl) { try { URL.revokeObjectURL(ui.recordingsPlayerUrl); } catch (e) {} }
+    ui.recordingsPlayerUrl = URL.createObjectURL(r.meta.blob);
+    renderAll();
+  }
+  // Le pasa el video al usuario para que lo guarde/comparta. Preferimos el share nativo del celular
+  // (navigator.share con el archivo) porque ahí aparece el cartel de siempre de "Guardar video" /
+  // "Guardar en Archivos" — mucho más confiable que una descarga directa por blob: (que en
+  // Safari/iOS casi nunca termina en la galería). Esto se dispara desde el tap del botón "Guardar"
+  // (acción de usuario directa), nunca solo, para que el navegador lo deje pasar.
+  function saveCamRecordingToDevice(id) {
+    var r = findCamRecording(id);
+    if (!r) return;
+    var m = r.meta;
+    try {
+      if (navigator.share && navigator.canShare && window.File) {
+        var file = new File([m.blob], m.downloadName || ('grabacion.' + (m.mime && m.mime.indexOf('mp4') !== -1 ? 'mp4' : 'webm')), { type: m.mime || 'video/webm' });
+        if (navigator.canShare({ files: [file] })) {
+          navigator.share({ files: [file], title: m.exerciseName || 'Grabación KB Deportivo' }).catch(function () {});
+          return;
+        }
+      }
+    } catch (e) {}
+    // Si no hay share de archivos (ej. desktop), seguimos con la descarga directa de siempre.
+    var url = URL.createObjectURL(m.blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = m.downloadName || 'grabacion.webm';
+    document.body.appendChild(a);
+    try { a.click(); } catch (e) {}
+    setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); URL.revokeObjectURL(url); }, 4000);
+  }
+  function deleteCamRecording(id) {
+    idbDelete('recordings', id).then(function () {
+      if (ui.recordingsPlayerUrl) {
+        var wasPlaying = findCamRecording(id);
+        if (wasPlaying) { try { URL.revokeObjectURL(ui.recordingsPlayerUrl); } catch (e) {} ui.recordingsPlayerUrl = null; }
+      }
+      camRecordings = camRecordings.filter(function (r) { return r.id !== id; });
+      renderAll();
+    });
+  }
   function mediaKind(url) { return (/^blob:/.test(url || '') || /^data:video\//.test(url || '')) ? 'video' : 'image'; }
   function setMedia(name, dataUrl) { state.exerciseMedia[name] = dataUrl; ui.mediaOpenFor = null; persist(); renderAll(); showToast('Demostración guardada para "' + name + '".'); }
   function removeMedia(name) {
@@ -1684,6 +1772,7 @@
       (uploader || '<button class="btn ghost small" data-action="open-rest-video-upload">+ Agregar video de descanso</button>') + '</div>';
   }
   function renderMediaViewer() {
+    if (ui.recordingsViewerOpen) return renderRecordingsViewer();
     if (!ui.mediaViewer) return '';
     var name = ui.mediaViewer;
     var url = getMedia(name);
@@ -1692,6 +1781,33 @@
     return '<div class="media-viewer-overlay"><div class="mv-top"><span class="mv-name">' + esc(name) + '</span>' +
       '<button class="btn ghost small" data-action="close-media-viewer">Cerrar ' + ICON_CLOSE + '</button></div>' + tag +
       '<button class="btn ghost small" style="margin-top:14px" data-action="remove-media" data-name="' + esc(name) + '">Quitar demostración</button></div>';
+  }
+  // "Mis grabaciones" (ver camRecordings arriba) — lista lo guardado en IndexedDB desde el botón ⏺
+  // del piloto de cámara, con reproducción y guardado/compartido in-app, sin depender de que la
+  // descarga automática del navegador haya llegado a algún lado del celular.
+  function renderRecordingsViewer() {
+    var playerHtml = ui.recordingsPlayerUrl ? '<video class="rec-player-video" src="' + ui.recordingsPlayerUrl + '" controls autoplay playsinline></video>' : '';
+    var listHtml;
+    if (!camRecordings.length) {
+      listHtml = '<p class="rec-empty">Todavía no hay ninguna grabación guardada acá.</p>';
+    } else {
+      listHtml = '<div class="rec-list">' + camRecordings.map(function (r) {
+        var m = r.meta || {};
+        var dt = m.createdAt ? new Date(m.createdAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+        var sizeMb = m.size ? (m.size / (1024 * 1024)).toFixed(1) + ' MB' : '';
+        return '<div class="rec-item">' +
+          '<div class="rec-item-info"><strong>' + esc(m.exerciseName || 'Entreno') + '</strong>' +
+          '<span>' + esc(dt) + (sizeMb ? ' · ' + sizeMb : '') + '</span></div>' +
+          '<div class="rec-item-actions">' +
+          '<button type="button" class="btn ghost small" data-action="play-recording" data-id="' + r.id + '">▶ Ver</button>' +
+          '<button type="button" class="btn ghost small" data-action="save-recording" data-id="' + r.id + '">⬇ Guardar</button>' +
+          '<button type="button" class="btn ghost small" data-action="delete-recording" data-id="' + r.id + '">🗑</button>' +
+          '</div></div>';
+      }).join('') + '</div>';
+    }
+    return '<div class="media-viewer-overlay recordings-viewer"><div class="mv-top"><span class="mv-name">Mis grabaciones' + (camRecordings.length ? ' (' + camRecordings.length + ')' : '') + '</span>' +
+      '<button class="btn ghost small" data-action="close-recordings-viewer">Cerrar ' + ICON_CLOSE + '</button></div>' +
+      playerHtml + listHtml + '</div>';
   }
 
   // ---------- domain helpers ----------
@@ -2941,19 +3057,38 @@
     var recorder = ui.cam.recorder;
     var chunks = ui.cam.recordChunks || [];
     var exerciseName = ui.cam.exerciseName;
+    // Capturamos el elapsed ACÁ (síncrono), no adentro de onstop: el botón que dispara esto
+    // (cam-toggle-record) pone ui.cam.recordStartedAt en null apenas vuelve de este llamado, antes de
+    // que el MediaRecorder termine de entregar los datos finales.
+    var elapsedLabel = formatRecElapsed(ui.cam.recordStartedAt);
     recorder.onstop = function () {
-      if (!chunks.length) return;
+      if (!chunks.length) {
+        // Antes esto no avisaba nada — si el MediaRecorder no capturó datos (puede pasar si se corta
+        // la grabación casi al instante de arrancarla), Lucas no tenía ninguna señal de que no se
+        // había guardado nada.
+        showToast('No se grabó nada (muy corta) — probá de nuevo.');
+        return;
+      }
       var mime = recorder.mimeType || 'video/webm';
       var ext = mime.indexOf('mp4') !== -1 ? 'mp4' : 'webm';
       var blob = new Blob(chunks, { type: mime });
-      var url = URL.createObjectURL(blob);
       var stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       var slug = (exerciseName || 'entreno').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      var downloadName = 'kb-deportivo-' + slug + '-' + stamp + '.' + ext;
+      // Guardado principal: adentro de la app (IndexedDB), así queda encontrable desde "Mis
+      // grabaciones" pase lo que pase con la descarga del navegador de abajo.
+      saveCamRecordingBlob(blob, mime, exerciseName, downloadName).then(function () {
+        showToast('Grabación guardada (' + elapsedLabel + ') — vela en "Mis grabaciones".');
+      });
+      // Mejor esfuerzo, además: intentamos la descarga directa de siempre. En algunos navegadores de
+      // escritorio esto SÍ baja el archivo solo; en varios de celular (sobre todo Safari/iOS) puede no
+      // hacer nada visible — por eso ya no es lo único de lo que depende encontrar la grabación.
+      var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
       a.href = url;
-      a.download = 'kb-deportivo-' + slug + '-' + stamp + '.' + ext;
+      a.download = downloadName;
       document.body.appendChild(a);
-      a.click();
+      try { a.click(); } catch (e) {}
       setTimeout(function () { if (a.parentNode) a.parentNode.removeChild(a); URL.revokeObjectURL(url); }, 4000);
     };
     if (recorder.state !== 'inactive') { try { recorder.stop(); } catch (e) {} }
@@ -3093,9 +3228,14 @@
         return '<span class="cam-log-item">Ronda ' + (idx + 1) + ': ' + camRoundLabel(n) + '</span>';
       }).join('') + '</div>';
     }
+    // Pedido de Lucas: no encontraba sus grabaciones ("no las debe estar guardando") — ahora cada
+    // grabación queda guardada adentro de la app (ver stopCamRecording/saveCamRecordingBlob), y este
+    // botón las muestra desde acá, sin depender de la carpeta de descargas del celular.
+    var recordingsBtnHtml = '<button type="button" class="btn ghost small" data-action="open-recordings-viewer">📼 Mis grabaciones' + (camRecordings.length ? ' (' + camRecordings.length + ')' : '') + '</button>';
     if (!cam.active) {
       return '<div class="cam-panel">' +
         '<button type="button" class="btn ghost small" data-action="cam-toggle"' + (cam.starting ? ' disabled' : '') + '>📷 ' + (cam.starting ? 'Activando…' : ('Activar cámara (piloto: ' + esc(camDisplayName(item)) + ')')) + '</button>' +
+        recordingsBtnHtml +
         (cam.error ? '<p class="cam-error">' + esc(cam.error) + '</p>' : '') +
         loggedHtml + '</div>';
     }
@@ -3149,6 +3289,7 @@
       '<button type="button" class="btn ghost small pb-icon-btn cam-zoom-btn" data-action="cam-toggle-zoom" title="' + (zoomed ? 'Achicar cámara' : 'Agrandar cámara') + '">' + (zoomed ? ICON_COLLAPSE : ICON_EXPAND) + '</button>' +
       camBadgeHtml + '</div>' +
       '<button type="button" class="btn ghost small" data-action="cam-toggle">Desactivar cámara</button>' +
+      recordingsBtnHtml +
       (cam.error ? '<p class="cam-error">' + esc(cam.error) + '</p>' : '') +
       mismatchHtml + loggedHtml + '</div>';
   }
@@ -5833,6 +5974,15 @@
       case 'open-media-viewer': openMediaViewer(el.getAttribute('data-name')); break;
       case 'close-media-viewer': closeMediaViewer(); break;
       case 'remove-media': removeMedia(el.getAttribute('data-name')); ui.mediaViewer = null; renderAll(); break;
+      case 'open-recordings-viewer': ui.recordingsViewerOpen = true; ui.recordingsPlayerUrl = null; renderAll(); break;
+      case 'close-recordings-viewer':
+        ui.recordingsViewerOpen = false;
+        if (ui.recordingsPlayerUrl) { try { URL.revokeObjectURL(ui.recordingsPlayerUrl); } catch (e) {} ui.recordingsPlayerUrl = null; }
+        renderAll();
+        break;
+      case 'play-recording': playCamRecording(Number(el.getAttribute('data-id'))); break;
+      case 'save-recording': saveCamRecordingToDevice(Number(el.getAttribute('data-id'))); break;
+      case 'delete-recording': deleteCamRecording(Number(el.getAttribute('data-id'))); break;
       case 'open-rest-video-upload': ui.restVideoUploadOpen = true; renderAll(); break;
       case 'close-rest-video-upload': ui.restVideoUploadOpen = false; renderAll(); break;
       case 'remove-rest-video': removeRestVideo(el.getAttribute('data-id')); break;
@@ -5942,6 +6092,7 @@
   initCapability();
   setupPlayBoardSwipe();
   primeVideoCaches();
+  loadCamRecordings();
   renderAll();
 })();
 </script>
