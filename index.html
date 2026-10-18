@@ -390,6 +390,11 @@
      con proporciones raras"). Con cover se recorta lo que sobra pero no se deforma, y de paso llena
      más pantalla ("proporción mayor") en vez de quedar con barras. */
   .cam-preview-wrap canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
+  /* Mount estable para el <canvas> real (ver ensureCamCanvasMounted) — el div en sí se vuelve a crear
+     en cada renderAll() como cualquier otro HTML del pizarrón, pero el <canvas> de adentro NUNCA se
+     recrea: solo se reubica. Necesita tamaño propio (si no, un div vacío colapsa a 0×0 y el canvas al
+     100%/100% de esa nada también queda en 0×0). */
+  .cam-canvas-mount { width: 100%; height: 100%; display: block; }
   /* Pedido de Lucas: ver la cámara en grande — mismo criterio que agrandar el video de técnica. */
   /* Pedido de Lucas: "se corta la info en la pantalla grande" — 100vh en el celu mide la pantalla
      COMPLETA como si la barra de direcciones del navegador no existiera, pero mientras esa barra
@@ -2975,6 +2980,28 @@
       });
     });
   }
+  // El <canvas> real de la cámara (id="cam-canvas") — se crea UNA sola vez acá y de ahí en más solo
+  // se REUBICA (nunca se recrea). Ver el comentario largo en renderCamPanel (donde antes iba el
+  // <canvas> directo en el string) para el bug que esto soluciona: canvas.captureStream() queda atado
+  // al OBJETO del canvas, y cualquier innerHTML que lo reemplace (cualquier renderAll() del pizarrón)
+  // lo destruye y arranca uno nuevo en blanco — el preview visual sigue viéndose perfecto porque
+  // drawCamPreview() busca el canvas por id en cada frame, pero la grabación queda apuntando a un
+  // canvas huérfano que ya no recibe más dibujos, y el MediaRecorder termina con 0 bytes.
+  var persistentCamCanvas = null;
+  function ensureCamCanvasMounted() {
+    var mount = document.getElementById('cam-canvas-mount');
+    if (!mount) return; // panel de cámara no está en pantalla ahora — nada que montar
+    if (!persistentCamCanvas) {
+      persistentCamCanvas = document.createElement('canvas');
+      persistentCamCanvas.id = 'cam-canvas';
+      persistentCamCanvas.width = 540;
+      persistentCamCanvas.height = 720;
+    }
+    // appendChild sobre un nodo que YA está en el documento lo MUEVE (no lo clona ni lo recrea), así
+    // que esto no interrumpe una grabación en curso — sigue siendo el mismo objeto de canvas, con el
+    // mismo captureStream() activo, nada más que cambia de lugar en el árbol del DOM.
+    if (persistentCamCanvas.parentNode !== mount) mount.appendChild(persistentCamCanvas);
+  }
   // Dibuja el preview espejado (como mirarse al espejo, más natural para entrenar de frente a la
   // cámara) en el canvas chico del panel — sin esqueleto completo, solo lo suficiente para ver que
   // está siguiendo el movimiento.
@@ -3324,7 +3351,19 @@
     return '<div class="cam-panel cam-panel-active">' +
       '<div class="cam-preview-wrap' + (zoomed ? ' zoomed' : '') + '">' +
       camTimerHtml +
-      '<canvas id="cam-canvas" width="540" height="720"></canvas>' +
+      // BUG REAL encontrado (Lucas probó con batería al 100% y seguía sin grabar nada): acá antes iba
+      // el <canvas id="cam-canvas"> directo en el string. Cada renderAll() — y durante un entrenamiento
+      // activo eso pasa todo el tiempo, cada vez que cambia de serie/fase/lado (ver
+      // updatePlayTimerDisplay) — reemplaza este HTML entero vía innerHTML, lo que DESTRUYE ese
+      // <canvas> y crea uno nuevo en blanco con el mismo id. drawCamPreview() vuelve a buscarlo por id
+      // en cada frame, así que el preview visual seguía viéndose perfecto (por eso el contador y la
+      // imagen nunca fallaron) — pero el canvas.captureStream() de startCamRecording() había quedado
+      // atado al canvas VIEJO, ahora huérfano y fuera del documento, que deja de recibir dibujos: el
+      // MediaRecorder graba un canvas muerto, de ahí los 0 bytes pase lo que pase con códec/bitrate/batería.
+      // Acá ahora va solo un mount estable (si querés el detalle completo, ver ensureCamCanvasMounted) —
+      // el <canvas> real se crea UNA sola vez y después solo se reubica (nunca se recrea), así
+      // sobrevive intacto a cualquier cantidad de renderAll() con una grabación en curso.
+      '<div id="cam-canvas-mount" class="cam-canvas-mount"></div>' +
       recordBtnHtml +
       '<button type="button" class="btn ghost small pb-icon-btn cam-zoom-btn" data-action="cam-toggle-zoom" title="' + (zoomed ? 'Achicar cámara' : 'Agrandar cámara') + '">' + (zoomed ? ICON_COLLAPSE : ICON_EXPAND) + '</button>' +
       camBadgeHtml + '</div>' +
@@ -4027,7 +4066,7 @@
     try { appEl.innerHTML = renderPanel(); }
     catch (err) { appEl.innerHTML = renderCrashFallback(err); }
     var pb = document.getElementById('play-board');
-    if (pb) { pb.innerHTML = renderPlayBoard(); ensureHeroVideoWired(); }
+    if (pb) { pb.innerHTML = renderPlayBoard(); ensureHeroVideoWired(); ensureCamCanvasMounted(); }
     var mv = document.getElementById('media-viewer');
     if (mv) mv.innerHTML = renderMediaViewer();
     var fr = document.getElementById('finish-review');
