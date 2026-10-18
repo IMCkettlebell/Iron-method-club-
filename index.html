@@ -3033,18 +3033,31 @@
       renderAll();
       return;
     }
-    var mimeCandidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+    // Lucas reportó grabaciones de hasta 1 minuto que terminan en "no se grabó nada" (0 bytes
+    // capturados) — en un celular real eso apunta a que el encoder de video del teléfono no pudo con
+    // la combinación vp9 + 5 Mbps (bitrate alto para un encoder de gama media/baja). vp8 tiene soporte
+    // de hardware/software bastante más universal en Android que vp9 para este caso (MediaRecorder
+    // grabando un canvas.captureStream), así que se prueba primero — y se baja el bitrate pedido a 3
+    // Mbps (sigue siendo nítido a 540×720, pero le exige bastante menos al encoder).
+    var mimeCandidates = ['video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm', 'video/mp4'];
     var mimeType = mimeCandidates.filter(function (m) { return MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m); })[0];
     var stream = canvas.captureStream(30);
-    // Pedido de Lucas: "mejor calidad" — sin especificar el bitrate, el navegador suele comprimir de
-    // más y el video grabado sale con bloques/borroso aunque el canvas ya esté en 540×720. 5 Mbps da
-    // un resultado nítido a esta resolución sin generar archivos gigantes (aprox. ~40MB por minuto).
-    var recorderOpts = { videoBitsPerSecond: 5000000 };
+    var recorderOpts = { videoBitsPerSecond: 3000000 };
     if (mimeType) recorderOpts.mimeType = mimeType;
     var recorder;
     try { recorder = new MediaRecorder(stream, recorderOpts); }
     catch (e) { ui.cam.error = 'No se pudo empezar a grabar acá.'; renderAll(); return; }
     var chunks = [];
+    // Diagnóstico para el próximo intento, si sigue sin grabar nada: estado real del track de video
+    // que se está capturando (si ya nace "ended" o sin dimensiones, el problema es el captureStream
+    // del canvas, no el encoder) — se muestra en el aviso de "no se grabó nada" de abajo.
+    var camDebugTrack = null;
+    try { camDebugTrack = stream.getVideoTracks()[0] || null; } catch (e2) {}
+    ui.cam.recordDebugInfo = camDebugTrack ? {
+      mimeUsed: mimeType || '(default)',
+      trackReadyState: camDebugTrack.readyState,
+      trackSettings: (camDebugTrack.getSettings ? camDebugTrack.getSettings() : {})
+    } : { mimeUsed: mimeType || '(default)', trackReadyState: 'sin track' };
     recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
     // Antes un error del MediaRecorder a mitad de grabación (puede pasar en algunos Android/WebView)
     // no tenía ningún manejo — la grabación se cortaba sola, en silencio, sin que quedara registrado
@@ -3076,12 +3089,16 @@
     // (cam-toggle-record) pone ui.cam.recordStartedAt en null apenas vuelve de este llamado, antes de
     // que el MediaRecorder termine de entregar los datos finales.
     var elapsedLabel = formatRecElapsed(ui.cam.recordStartedAt);
+    var debugInfo = ui.cam.recordDebugInfo;
     recorder.onstop = function () {
       if (!chunks.length) {
         // Antes esto no avisaba nada — si el MediaRecorder no capturó datos (puede pasar si se corta
         // la grabación casi al instante de arrancarla), Lucas no tenía ninguna señal de que no se
-        // había guardado nada.
-        showToast('No se grabó nada (muy corta) — probá de nuevo.');
+        // había guardado nada. Si pasa DE NUEVO después de grabar un rato largo (no "muy corta" de
+        // verdad), el detalle técnico de acá abajo es lo que hace falta para seguir el rastro — el
+        // estado real del track de video que se intentó capturar.
+        var dbgTxt = debugInfo ? (' [' + debugInfo.mimeUsed + ', track: ' + debugInfo.trackReadyState + (debugInfo.trackSettings && debugInfo.trackSettings.width ? (', ' + debugInfo.trackSettings.width + 'x' + debugInfo.trackSettings.height) : '') + ', ' + elapsedLabel + ']') : '';
+        showToast('No se grabó nada' + dbgTxt + ' — probá de nuevo.');
         return;
       }
       var mime = recorder.mimeType || 'video/webm';
