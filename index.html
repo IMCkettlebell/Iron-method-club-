@@ -241,7 +241,12 @@
      con la tipografía de botón genérica del resto de la app. */
   .btn-headline { font-family: var(--font-display); font-weight: 700; letter-spacing: 0.015em; font-size: 1.05rem; }
 
-  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ash); color: var(--iron); padding: 10px 16px; border-radius: var(--radius); font-size: 0.85rem; z-index: 30; font-weight: 600; }
+  /* Bug encontrado por Lucas: el toast tenía z-index 30, por debajo del pizarrón en pleno
+     entrenamiento (.play-board-overlay, z-index 50, fondo opaco) y de la cámara en pantalla completa
+     (.cam-preview-wrap.zoomed, z-index 70) — quedaba tapado y generado igual, pero invisible, justo
+     en el único lugar donde ahora importa (el aviso de "Grabación guardada"/error al cortar de
+     grabar). 80 lo deja siempre arriba de cualquier overlay de la app. */
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ash); color: var(--iron); padding: 10px 16px; border-radius: var(--radius); font-size: 0.85rem; z-index: 80; font-weight: 600; }
 
   .play-bar { background: var(--blue-soft); border: 2px solid var(--blue); border-radius: var(--radius); padding: 12px 14px; }
   /* Tinte por fase (mismo criterio que el pizarrón completo, ver .play-board-overlay.phase-*):
